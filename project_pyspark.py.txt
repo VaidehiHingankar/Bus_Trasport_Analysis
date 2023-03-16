@@ -1,0 +1,65 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import when, col
+from pyspark.sql.functions import col
+from pyspark.sql.functions import input_file_name
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+from pyspark.sql.functions import to_date
+from datetime import date
+from datetime import datetime
+import os
+
+def extract():
+    global df
+    folder_path = "/home/ubh01/real_time_data"
+    files = sorted(os.listdir(folder_path))
+    latest_file = files[1]
+    df = spark.read.format("csv").option("header", "true").load("{}/{}".format(folder_path, latest_file))    
+
+def transform():
+    df = df.withColumn('route_desc', when(col('route_desc').isNull(), 'others').otherwise(col('route_desc')))
+
+    df = df.withColumn('formatted_address', when(col('formatted_address').isNull(), 'others').otherwise(col('formatted_address')))
+
+    df=df.na.drop()
+
+    def holiday_label(row):
+        if row == date(2013, 9, 1):
+            return '1'
+        if row == date(2013, 10, 6):
+            return '1'
+        if row == date(2013, 12, 22):
+            return '2'
+        if row == date(2013, 12, 29):
+            return '1'
+        if row == date(2014, 1, 26):
+            return '1'
+        if row == date(2014, 3, 9):
+            return '1'
+        if row == date(2014, 4, 13):
+            return '2'
+        if row == date(2014, 4, 20):
+            return '2'
+        if row == date(2014, 6, 8):
+            return '1'
+        return '0'
+
+    # Register the UDF
+    holiday_label_udf = udf(holiday_label, StringType())
+
+    # Apply the UDF to a DataFrame column
+    df = df.withColumn('WeekBeginning', to_date(df['WeekBeginning']))
+    df = df.withColumn('holiday_label', holiday_label_udf(df['WeekBeginning']))
+
+    #here we can add one more column of file name
+    df = df.withColumn("filename", input_file_name())
+
+def spark_to_hive():
+    df.write.mode("overwrite").saveAsTable("batch_tablee")
+    df.write.mode("append").insertInto("default.warehouse_table")
+
+if __name__ == "__main__":
+    spark = SparkSession.builder.enableHiveSupport().getOrCreate()
+    extract()
+    transform()
+    spark_to_hive()
